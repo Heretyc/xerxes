@@ -1,0 +1,222 @@
+#!/usr/bin/env python3
+
+from sys import version_info
+import getpass
+import requests
+import sys
+import json
+import sys
+import re
+import os
+import errno
+import tempfile
+import hashlib
+import json
+import time
+import ipaddress
+import math
+import zlib
+import base64
+import ipaddress
+import datetime
+import pprint
+import paramiko
+from io import StringIO
+import collections
+import struct
+from dateutil.relativedelta import relativedelta
+from modblack2 import get_working_dir, is_dir_writable, progress_bar, can_be_int, get_date_time_string, \
+    calc_elapsed_minutes, shroud, de_shroud, aes_crypt, aes_decrypt, read_json_file, confirm_yn, \
+    write_json_file, ask_console, console_notice
+from blacklite import Blacklite
+
+"""xerxes.py: Shodan mass data collection system"""
+
+__author__ = "Brandon Blackburn"
+__maintainer__ = "Brandon Blackburn"
+__email__ = "contact@bhax.net"
+__website__ = "https://keybase.io/blackburnhax"
+__copyright__ = "Copyright 2019, Brandon Blackburn"
+__license__ = "Apache 2.0"
+
+# Docstrings in this project should follow the reStructuredText system and will be in accordance with PEP-257
+# For a primer on it's use visit: https://www.jetbrains.com/help/pycharm/using-docstrings-to-specify-types.html
+# PEP-257: https://www.python.org/dev/peps/pep-0257/
+
+if (version_info[0] < 3) or ((version_info[0] == 3) and (version_info[1] < 6)):
+    raise Exception("Python 3.6 or a more recent version is required.")
+
+# pip install sshtunnel
+# pip install pymongo
+# pip install paramiko
+
+# region TLS/SSL Self-signed certificate bypass
+# TODO: Remove this TLS security bypass region
+from requests.packages.urllib3.exceptions import InsecureRequestWarning
+
+requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
+# endregion
+
+class Xerxes():
+    def __init__(self):
+        if (sys.version_info[0] < 3) or ((sys.version_info[0] == 3) and (sys.version_info[1] < 6)):
+            raise Exception("Python 3.6 or a more recent version is required.")
+
+        self.app_name="xerxes"
+        self.shodan_api_key = "00000000000000000000000000000000"
+        self.shodan_url = "https://api.shodan.io"
+        self.xerxes_working_dir = get_working_dir(self.app_name)
+        self.settings_standalone_file = "xerxes-settings.json"
+        is_dir_writable(self.xerxes_working_dir)
+        # TODO: remove main() from init and setup proper class for xerxes
+        self.db = Blacklite(self.app_name)
+        self.main()
+
+    def validate_shodan_auth(self):
+            self.settings_file = f"{self.xerxes_working_dir}/{self.settings_standalone_file}"
+            settings_dict = read_json_file(self.settings_file)
+            self.settings_dict['al_u'] = settings_dict.get('al_u', "-1")
+            self.settings_dict['al_p'] = settings_dict.get('al_p', "-1")
+            if self.settings_dict['al_u'] == "-1":
+                entry = aes_crypt(de_shroud(self.pin), input("Enter your AlertLogic User Name (Double check first!): "))
+                self.settings_dict['al_u'] = entry
+                del entry
+
+            if self.settings_dict['al_p'] == "-1":
+                while True:
+                    entry = getpass.getpass("Enter your AlertLogic Password: ")
+                    if entry == getpass.getpass("Please re-enter AlertLogic Password to confirm: "):
+                        entry = aes_crypt(de_shroud(self.pin), entry)
+                        break
+                    else:
+                        print("Your passwords did not match, please try again.")
+
+                self.settings_dict['al_p'] = entry
+                del entry
+            write_json_file(self.settings_file, self.settings_dict)
+
+
+    # date_object = datetime.date.today() + relativedelta(months=-max_event_age_months)
+    # max_event_age = datetime.datetime(date_object.year, date_object.month, date_object.day)
+    # del date_object
+
+
+    def filter_text(self, text, strict=False):
+        import string
+        # Get the difference of all ASCII characters from the set of printable characters
+        nonprintable = set([chr(i) for i in range(128)]).difference(string.printable)
+        # Use translate to remove all non-printable characters
+        if not isinstance(text, str):
+            return text
+
+        filtered = text.translate({ord(character): None for character in nonprintable})
+        if strict == True:
+            filtered = filtered.replace('\n', ' ').replace('\r', '')
+        return filtered
+
+
+    def recursive_dict_scan(self, input_dict):
+        for key, value in input_dict.items():
+            if isinstance(value, dict):
+                self.recursive_dict_scan(value)
+            else:
+                input_dict[key] = self.filter_text(value)
+        return input_dict
+
+
+    def recursive_list_scan(self, raw_list):
+        if isinstance(raw_list, list):
+            new_list = []
+            for item in raw_list:
+                new_list_item = self.filter_text(item)
+                new_list.append(new_list_item)
+            return new_list
+        else:
+            return raw_list
+
+
+    def recursive_object_scan(self, raw_object):
+        if isinstance(raw_object, dict):
+            new = {}
+            for key, value in raw_object.items():
+                if isinstance(value, dict):
+                    value = self.recursive_dict_scan(value)
+                elif isinstance(value, str):
+                    value = self.filter_text(value)
+                elif isinstance(value, int):
+                    pass
+                elif isinstance(value, list):
+                    value = self.recursive_list_scan(value)
+
+                # Strict mode on the cleaner will remove any newlines or Carriage Returns
+                key = self.filter_text(key, True)
+                new[key] = value
+            return new
+        elif isinstance(raw_object, str):
+            return raw_object
+        elif isinstance(raw_object, int):
+            return raw_object
+        elif isinstance(self.value, list):
+            return self.recursive_list_scan(self.value)
+        else:
+            return raw_object
+
+
+    def shodan_api_query(self, url):
+        headers = {'Accept': 'application/json'}
+        while True:
+            try:
+                response = requests.get(url, headers=headers, timeout=5)
+                break
+            except (
+            requests.exceptions.ConnectTimeout, requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError):
+                console_notice(" Packet loss when attempting to reach Shodan API")
+        return response
+
+
+    def shodan_info(self):
+        response = self.shodan_api_query(f"{self.shodan_url}/api-info?key={self.shodan_api_key}")
+        pp = pprint.PrettyPrinter(indent=4)
+        pp.pprint(json.loads(response.text))
+        print()
+
+
+    def shodan_search(self, query, facets=""):
+        if len(facets) < 1:
+            response = self.shodan_api_query(f"{self.shodan_url}/shodan/host/search?key={self.shodan_api_key}&query=\'{query}\'")
+        else:
+            response = self.shodan_api_query(
+                f"{self.shodan_url}/shodan/host/search?key={self.shodan_api_key}&query=\'{query}\'&facets=\'{facets}\'")
+        print(response.text)
+        print()
+        return response.text
+
+    def main(self):
+        print("Shodan Info:")
+        self.shodan_info()
+        print("Reading Shodan...")
+        results = self.shodan_search("Org:google")
+        json_results = json.loads(results)
+
+        cleaned_json_results = self.recursive_object_scan(json_results)
+
+
+        for discovered_host in cleaned_json_results['matches']:
+            guid_set = False
+            db_entry = {}
+            for key, value in discovered_host.items():
+                if key.lower() == "ip":
+                    db_entry['guid'] = value
+                    guid_set = True
+                db_entry[key] = value
+            self.db.write_recursive("shodan", **db_entry)
+
+
+        #pp = pprint.PrettyPrinter(indent=4)
+        #pp.pprint(cleaned_json_results)
+
+        self.shodan_info()
+        print("Complete")
+
+if __name__ == "__main__":
+    Xerxes()
