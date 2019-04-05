@@ -8,8 +8,7 @@ verify_ssl = true
 [packages]
 requests = "*"
 paramiko = "*"
-dateutil = "*"
 python-dateutil = "*"
 
 [requires]
-python_version = "3.6"
+python_version = "3.7"

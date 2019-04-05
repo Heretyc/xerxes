@@ -1,5 +1,18 @@
 #!/usr/bin/env python3
 
+#  Copyright (c) 2019. Brandon Blackburn - https://keybase.io/blackburnhax, Apache License, Version 2.0.
+#  Licensed under the Apache License, Version 2.0 (the "License");
+#  you may not use this file except in compliance with the License.
+#  You may obtain a copy of the License at
+#  http://www.apache.org/licenses/LICENSE-2.0
+#  Unless required by applicable law or agreed to in writing,
+#  software distributed under the License is distributed on an
+#  "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+#  either express or implied. See the License for the specific
+#  language governing permissions and limitations under the License.
+#  TL;DR:
+#  For a human-readable & fast explanation of the Apache 2.0 license visit:  http://www.tldrlegal.com/l/apache2
+
 from sys import version_info
 import getpass
 import requests
@@ -11,13 +24,11 @@ import os
 import errno
 import tempfile
 import hashlib
-import json
 import time
 import ipaddress
 import math
 import zlib
 import base64
-import ipaddress
 import datetime
 import pprint
 import paramiko
@@ -43,8 +54,8 @@ __license__ = "Apache 2.0"
 # For a primer on it's use visit: https://www.jetbrains.com/help/pycharm/using-docstrings-to-specify-types.html
 # PEP-257: https://www.python.org/dev/peps/pep-0257/
 
-if (version_info[0] < 3) or ((version_info[0] == 3) and (version_info[1] < 6)):
-    raise Exception("Python 3.6 or a more recent version is required.")
+if version_info<(3,6,0):
+    raise RuntimeError("Python 3.6 or a more recent version is required. Detected Python %s.%s" % version_info[:2])
 
 # pip install sshtunnel
 # pip install pymongo
