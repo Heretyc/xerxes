@@ -156,7 +156,7 @@ class Blacklite():
         # It will look similar to this example, including guid, date, and each heading with a TEXT SQL typecast
         # query = f"CREATE TABLE IF NOT EXISTS {sanitized_table_name} (guid INTEGER PRIMARY KEY, date TEXT, hostname TEXT, ip TEXT, mac TEXT)"
         #guid INTEGER PRIMARY KEY, date TEXT, hostname TEXT, ip TEXT, mac TEXT)
-        query = f"CREATE TABLE IF NOT EXISTS {sanitized_table_name} ("
+        query = f"CREATE TABLE IF NOT EXISTS `{sanitized_table_name}` ("
         # Instead of adding the comma at the end of the loop, we add it at the beginning and simply have a special first
         first_element = True
         for heading in re_ordered_headings:
@@ -173,7 +173,7 @@ class Blacklite():
                 typecast = "TEXT"
             else:
                 typecast = "TEXT"
-            query = f"{query}{heading} {typecast}"
+            query = f"{query}`{heading}` {typecast}"
         # Add the closing parenthesis to the query
         query = f"{query})"
 
@@ -649,8 +649,8 @@ class Blacklite():
             # this is the specified column for storing the parent foreign key id which links the tables
             # typecast must be identical to parent guid key type
 
-            typecast = "INTEGER"
-            query = f"{query}, parent_guid {typecast}, FOREIGN KEY (parent_guid) REFERENCES {parent_table}(guid) ON UPDATE CASCADE ON DELETE CASCADE"
+            typecast = "INTEGER NOT NULL"
+            query = f"{query}, parent_guid {typecast}, FOREIGN KEY (parent_guid) REFERENCES `{parent_table}` ON UPDATE CASCADE ON DELETE CASCADE"
 
             # Add the closing parenthesis to the query
             query = f"{query})"
@@ -664,7 +664,7 @@ class Blacklite():
             return None
 
 
-    def __write_child(self, child_table, parent_guid, parent_table, **kwargs):
+    def __write_child(self, child_table, parent_guid_value, parent_table, **kwargs):
             """
             Writes a new entry to the DB, overwrites if a guid collision occurs
             If any new column header keyword arguments are found, they are appended silently to the schema.
@@ -676,7 +676,7 @@ class Blacklite():
 
             date = time.time()
 
-            self.__build_child_db_if_needed(child_table, parent_guid, parent_table, **kwargs)
+            self.__build_child_db_if_needed(child_table, parent_guid_value, parent_table, **kwargs)
 
             # region SQL Injection Protection
 
@@ -698,8 +698,6 @@ class Blacklite():
             query = f"INSERT OR REPLACE INTO {sanitized_child_table_name} ("
             # Instead of adding the comma at the end of the loop, we add it at the beginning and simply have a special first
             first_element = True
-            guid_found = False
-            date_found = False
             values_list = []
             # Building header keywords section of the query first, while generating a list of the values to add next
             for key, value in kwargs.items():
@@ -717,15 +715,7 @@ class Blacklite():
                 # region Save the values to a separate list and check for reserved keywords
                 # Building: "INSERT INTO {sanitized_child_table_name} (date, guid, hostname, ip, mac) VALUES (>>?, ?, ?, ?, ?<<)"
                 if sanitized_heading.lower() == "guid":
-                    # Reserved keywords are forced lowercase every time
-                    sanitized_heading = sanitized_heading.lower()
-                    # and stored as raw integers in the DB
-                    if can_be_int(value):
-                        value = int(value)
-                    else:
-                        raise TypeError(f"guid given cannot be converted or used as an integer.  guid={value}")
-                    values_list.append(value)
-                    guid_found = True
+                    raise TypeError(f"A column is labeled 'guid', this should be passed as a parameter instead")
                 elif sanitized_heading.lower() == "date":
                     # Reserved keywords are forced lowercase every time
                     sanitized_heading = sanitized_heading.lower()
@@ -738,6 +728,16 @@ class Blacklite():
                 # endregion
 
                 query = f"{query}{sanitized_heading}"
+
+
+            # store parent guid as paremeter and update query
+            if can_be_int(parent_guid_value):
+                # Force it to an int type
+                parent_guid_value = int(parent_guid_value)
+            else:
+                raise TypeError(f"guid given cannot be converted or used as an integer.  guid={parent_guid_value}")
+            values_list.append(parent_guid_value)
+            query = f"{query}, parent_guid"
 
             # Add the closing parenthesis to the first part of the query, and start VALUES section
             # Building: "INSERT INTO {sanitized_child_table_name} (date, guid, hostname, ip, mac>>) VALUES (<<?, ?, ?, ?, ?)"
@@ -753,6 +753,9 @@ class Blacklite():
                     # This way we don't need to remove a trailing comma and space in the query after loop completion
                     query = f"{query}, "
                 query = f"{query}?"
+
+
+
 
             # Add the closing parenthesis to the last part of the query, finishing the values section
             # Building: "INSERT INTO {sanitized_child_table_name} (date, guid, hostname, ip, mac) VALUES (?, ?, ?, ?, ?>>)<<"

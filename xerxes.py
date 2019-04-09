@@ -36,8 +36,8 @@ from io import StringIO
 import collections
 import struct
 from dateutil.relativedelta import relativedelta
-from modblack2 import get_working_dir, is_dir_writable, progress_bar, can_be_int, get_date_time_string, \
-    calc_elapsed_minutes, shroud, de_shroud, aes_crypt, aes_decrypt, read_json_file, confirm_yn, \
+from modblack2 import get_working_dir, http_status_code, is_dir_writable, progress_bar, can_be_int, get_date_time_string, \
+    calc_elapsed_minutes, shroud, de_shroud, aes_crypt, aes_decrypt, read_json_file, confirm, confirm_yn, \
     write_json_file, ask_console, console_notice
 from blacklite import Blacklite
 
@@ -74,8 +74,9 @@ class Xerxes():
             raise Exception("Python 3.6 or a more recent version is required.")
 
         self.app_name="xerxes"
-        self.shodan_api_key = "00000000000000000000000000000000"
-        self.shodan_url = "https://api.shodan.io"
+        # self.shodan_api_key = "00000000000000000000000000000000"
+        # URL should end with trailing slash /
+        self.shodan_url = "https://api.shodan.io/"
         self.xerxes_working_dir = get_working_dir(self.app_name)
         self.settings_standalone_file = "xerxes-settings.json"
         is_dir_writable(self.xerxes_working_dir)
@@ -172,32 +173,97 @@ class Xerxes():
         else:
             return raw_object
 
+    def shodan_api_query(self, endpoint, **kwargs):
+        """
+        Executes a properly formatted API call to the Shodan.io REST API with the supplied arguments.
 
-    def shodan_api_query(self, url):
-        headers = {'Accept': 'application/json'}
+        Designed with developers in mind. This method will print a fully formatted Slack message to the console if any HTTP errors occur (Outside of standard packet loss).
+
+        This error text can then be directly copied into Slack for submission to support or other teams if needed.
+        :param endpoint: The URL endpoint to hit on the API with NO LEADING OR PRECEEDING SLASHES. (e.g., GOOD: assets/search ,BAD: /assets/search  or  assets/search/)
+        :type endpoint: str
+        :keyword method: The type of HTTP command to execute. Currently accepts GET or POST
+        :type method: str
+        :keyword params: A dict containing the parameters to pass
+        :type params: dict
+        :keyword payload: A dict containing the query data to send
+        :type params: dict
+        :return: The users response. Yes = True, No = False
+        :rtype: bool
+        """
+        headers = {"Content-Type": "application/json", 'Accept': 'application/json'}
+        method = kwargs.get("method", "get")
+        method = method.lower()
+
+        parameters = kwargs.get("params", {})
+
+        if not isinstance(parameters, dict):
+            raise ValueError("params keyword passed to shodan_api_query is not a valid dict object")
+
+        # We need "key" to be in the parameters to represent the authentication key, so add it if missing
+        # In Py3, it's more performant to ask for forgiveness than permission. So Try/Except
+        try:
+            # Just testing if it
+            parameters['key']
+        except KeyError:
+            parameters['key'] = self.shodan_api_key
+
+        if len(parameters['key']) < 32:
+            raise ValueError(f"Shodan api key appears malformed. First 4 chars of the key are: {kwargs['key'][:4]}")
+
+        payload = kwargs.get("payload", "{}")
+
         while True:
             try:
-                response = requests.get(url, headers=headers, timeout=5)
-                break
+                if method == "get":
+                    response = requests.get(f"{self.shodan_url}{endpoint}", headers=headers, params=parameters,
+                                            data=json.dumps(payload), verify=True)
+                    break
+                elif method == "post":
+                    response = requests.post(f"{self.shodan_url}{endpoint}", headers=headers, params=parameters,
+                                             data=json.dumps(payload), verify=True)
+                    break
+                else:
+                    console_notice(f" Invalid Method passed to shodan_api_query:  {method}")
+                    raise ValueError("Invalid Method passed to shodan_api_query:  {method}")
+
             except (
             requests.exceptions.ConnectTimeout, requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError):
                 console_notice(" Packet loss when attempting to reach Shodan API")
+        if not response.status_code == requests.codes.ok:
+            print(f"\n\rShodan API returned an error *HTTP {response.status_code}- {http_status_code(response.status_code)}*\n\r*Request sent to endpoint:*\n\r```\n\r{endpoint}\n\r```\n\r\n\r*Payload sent:*\n\r```")
+            pprint.pprint(payload, indent=4)
+            print("```\n\r\n\r*Parameters passed:*\n\r```")
+            pprint.pprint(parameters, indent=4)
+            print("```\n\r\n\r*Server Response:*\n\r```")
+            pprint.pprint(response.text, indent=4)
+            print("\n\r```\n\r")
+            if not confirm(prompt='Continue execution?', resp=True):
+                raise ConnectionError(
+                    "Shodan API returned an error HTTP {response.status_code}- {http_status_code(response.status_code)}")
+
         return response
 
 
     def shodan_info(self):
-        response = self.shodan_api_query(f"{self.shodan_url}/api-info?key={self.shodan_api_key}")
+
+        response = self.shodan_api_query("api-info")
         pp = pprint.PrettyPrinter(indent=4)
         pp.pprint(json.loads(response.text))
         print()
 
-
     def shodan_search(self, query, facets=""):
         if len(facets) < 1:
-            response = self.shodan_api_query(f"{self.shodan_url}/shodan/host/search?key={self.shodan_api_key}&query=\'{query}\'")
+            parameters = {
+                "query": query,
+                "facets": facets
+            }
+            response = self.shodan_api_query("shodan/host/search", params=parameters )
         else:
-            response = self.shodan_api_query(
-                f"{self.shodan_url}/shodan/host/search?key={self.shodan_api_key}&query=\'{query}\'&facets=\'{facets}\'")
+            parameters = {
+                "query": query
+            }
+            response = self.shodan_api_query("shodan/host/search", params=parameters)
         print(response.text)
         print()
         return response.text
