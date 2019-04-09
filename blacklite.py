@@ -650,7 +650,7 @@ class Blacklite():
             # typecast must be identical to parent guid key type
 
             typecast = "INTEGER"
-            query = f"{query}, parent_guid {typecast}, FOREIGN KEY (parent_guid) REFERENCES {parent_table}(parent_guid) ON UPDATE CASCADE ON DELETE CASCADE"
+            query = f"{query}, parent_guid {typecast}, FOREIGN KEY (parent_guid) REFERENCES {parent_table}(guid) ON UPDATE CASCADE ON DELETE CASCADE"
 
             # Add the closing parenthesis to the query
             query = f"{query})"
