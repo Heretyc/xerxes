@@ -167,7 +167,7 @@ class Blacklite():
                 query = f"{query}, "
 
             if heading == "guid":
-                typecast = "INTEGER PRIMARY KEY"
+                typecast = "TEXT PRIMARY KEY"
             elif heading == "date":
                 # Dont need this, but if for some reason the type needs to be changed for a specific item, this is how
                 typecast = "TEXT"
@@ -482,7 +482,7 @@ class Blacklite():
                 # This way we don't need to remove a trailing comma and space in the query after loop completion
                 query = f"{query}, "
 
-            sanitized_heading = self.__alpha_num_sanitize(key)
+            sanitized_heading = self.self.__sql_sanitize(key)
             # Note: To prevent accidental use, we explicitly delete the un-sanitized key variable
             del key
 
@@ -493,10 +493,10 @@ class Blacklite():
                 # Reserved keywords are forced lowercase every time
                 sanitized_heading = sanitized_heading.lower()
                 # and stored as raw integers in the DB
-                if can_be_int(value):
-                    value = int(value)
-                else:
-                    raise TypeError(f"guid given cannot be converted or used as an integer.  guid={value}")
+                # if can_be_int(value):
+                #     value = int(value)
+                # else:
+                #     raise TypeError(f"guid given cannot be converted or used as an integer.  guid={value}")
                 values_list.append(value)
                 guid_found = True
             elif sanitized_heading.lower() == "date":

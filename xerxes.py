@@ -31,11 +31,14 @@ import zlib
 import base64
 import datetime
 import pprint
+import sqlite3
 import paramiko
 from io import StringIO
 import collections
 import struct
 from dateutil.relativedelta import relativedelta
+import multiprocessing
+from multiprocessing import Pool, TimeoutError
 from modblack2 import get_working_dir, http_status_code, is_dir_writable, progress_bar, can_be_int, get_date_time_string, \
     calc_elapsed_minutes, shroud, de_shroud, aes_crypt, aes_decrypt, read_json_file, confirm, confirm_yn, \
     write_json_file, ask_console, console_notice
@@ -79,6 +82,8 @@ class Xerxes():
         self.shodan_url = "https://api.shodan.io/"
         self.xerxes_working_dir = get_working_dir(self.app_name)
         self.settings_standalone_file = "xerxes-settings.json"
+        self.xerxes_output = f"{self.xerxes_working_dir}\\xerxes_data.json"
+        self.xerxes_db = f"{self.xerxes_working_dir}\\xerxes_data.sqlite"
         is_dir_writable(self.xerxes_working_dir)
         # TODO: remove main() from init and setup proper class for xerxes
         self.db = Blacklite(self.app_name)
@@ -112,6 +117,19 @@ class Xerxes():
     # max_event_age = datetime.datetime(date_object.year, date_object.month, date_object.day)
     # del date_object
 
+    def write_json_file(self, json_file, dict_to_write):
+        """
+        Writes a dict to a JSON file in the filesystem, appends or modifies last_update key with EPOC time
+        :param json_file: JSON File to write to
+        :type json_file: str
+        :param dict_to_write: dict to read information from that will be written into the json_file
+        :type dict_to_write: dict
+        :rtype: None
+        """
+        date = get_date_time_string()
+        dict_to_write["last_update"] = date
+        with open(json_file, 'w') as f:
+            json.dump(dict_to_write, f, ensure_ascii=False)
 
     def filter_text(self, text, strict=False):
         import string
@@ -264,11 +282,19 @@ class Xerxes():
                 "query": query
             }
             response = self.shodan_api_query("shodan/host/search", params=parameters)
-        print(response.text)
-        print()
+        # print(response.text)
+        # print()
         return response.text
 
     def main(self):
+        def has_key(dict_object, key_to_check_for):
+            try:
+                test = dict_object[key_to_check_for]
+                del test
+                return True
+            except KeyError:
+                return False
+
         print("Shodan Info:")
         self.shodan_info()
         print("Reading Shodan...")
@@ -277,16 +303,97 @@ class Xerxes():
 
         cleaned_json_results = self.recursive_object_scan(json_results)
 
-
+        # self.write_json_file(self.xerxes_output, cleaned_json_results)
         for discovered_host in cleaned_json_results['matches']:
             guid_set = False
             db_entry = {}
-            for key, value in discovered_host.items():
-                if key.lower() == "ip":
-                    db_entry['guid'] = value
-                    guid_set = True
-                db_entry[key] = value
-            self.db.write_recursive("shodan", **db_entry)
+            if has_key(discovered_host, "ip_str"):
+                db_entry['guid'] = discovered_host["ip_str"]
+                if has_key(discovered_host, "product"):
+                    db_entry['guid'] = f"{db_entry['guid']}_{discovered_host['product']}"
+                    db_entry['product'] = discovered_host["product"]
+                else:
+                    db_entry['product'] = ""
+
+                if has_key(discovered_host, "transport"):
+                    db_entry['guid'] = f"{db_entry['guid']}_on_{discovered_host['transport']}"
+                    db_entry['transport'] = discovered_host["transport"]
+                else:
+                    db_entry['transport'] = ""
+
+                if has_key(discovered_host, "port"):
+                    db_entry['guid'] = f"{db_entry['guid']}{discovered_host['port']}"
+                    db_entry['port'] = discovered_host["port"]
+                else:
+                    db_entry['port'] = ""
+
+                guid_set = True
+
+            if has_key(discovered_host, "timestamp"):
+                db_entry['updated'] = discovered_host["timestamp"]
+            else:
+                db_entry['updated'] = ""
+
+            if has_key(discovered_host, "version"):
+                db_entry['version'] = discovered_host["version"]
+            else:
+                db_entry['version'] = ""
+
+            if has_key(discovered_host, "hostnames"):
+                hostname_string = ""
+                for item in discovered_host["hostnames"]:
+                    if len(hostname_string) < 2:
+                        hostname_string = f"{item}"
+                    else:
+                        hostname_string = f"{hostname_string}, {item}"
+                db_entry['hostnames'] = hostname_string
+            else:
+                db_entry['hostnames'] = ""
+
+            if has_key(discovered_host, "os"):
+                db_entry['os'] = discovered_host["os"]
+            else:
+                db_entry['os'] = ""
+
+            if has_key(discovered_host, "ip_str"):
+                db_entry['ip'] = discovered_host["ip_str"]
+            else:
+                db_entry['ip'] = ""
+
+            if has_key(discovered_host, "asn"):
+                db_entry['asn'] = discovered_host["asn"]
+            else:
+                db_entry['asn'] = ""
+
+            if has_key(discovered_host, "org"):
+                db_entry['org'] = discovered_host["org"]
+            else:
+                db_entry['org'] = ""
+
+            if has_key(discovered_host, "isp"):
+                db_entry['isp'] = discovered_host["isp"]
+            else:
+                db_entry['isp'] = ""
+
+            if has_key(discovered_host, "http"):
+                http_dict = discovered_host["http"]
+
+                if has_key(http_dict, "components"):
+                    components_dict = http_dict["components"]
+                    for key, value in components_dict.items():
+                        db_entry[f'{key}_exists'] = "1"
+
+
+            self.db.write("shodan", **db_entry)
+
+
+        # sqlite_connection = sqlite3.connect(self.xerxes_db)
+        # sqlite_connection.enable_load_extension(True)
+        # sqlite_connection.load_extension("./json1")
+        # with sqlite_connection:
+        #     db_create_cursor = sqlite_connection.cursor()
+        #     db_create_cursor.execute(query)
+        #     sqlite_connection.commit()
 
 
         #pp = pprint.PrettyPrinter(indent=4)
