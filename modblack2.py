@@ -392,32 +392,45 @@ def confirm(prompt=None, resp=False):
         prompt = '%s [%s]|%s: ' % (prompt, 'y', 'n')
     else:
         prompt = '%s [%s]|%s: ' % (prompt, 'n', 'y')
+    try:
+        while True:
+            ans = input(prompt)
+            if not ans:
+                return resp
+            if ans not in ['y', 'Y', 'n', 'N']:
+                print('please enter y or n.')
+                continue
+            if ans == 'y' or ans == 'Y':
+                return True
+            if ans == 'n' or ans == 'N':
+                return False
+    except EOFError:
+        print(f"Unable to prompt on console, assuming {resp}.")
 
-    while True:
-        ans = input(prompt)
-        if not ans:
-            return resp
-        if ans not in ['y', 'Y', 'n', 'N']:
-            print('please enter y or n.')
-            continue
-        if ans == 'y' or ans == 'Y':
-            return True
-        if ans == 'n' or ans == 'N':
-            return False
 
-
-def confirm_yn():
-    while True:
-        user_input = input("Please confirm [y,n]: ")
-        user_input = user_input.strip()
-        user_input = user_input.lower()
-        if user_input == "y" or user_input == "yes":
-            return True
-        elif user_input == "n" or user_input == "no":
-            return False
-        else:
-            print(" ")
-            print("Please enter a yes or no.")
+def confirm_yn(default_resp=False):
+    """
+    Simply asks the user to respond yes or no. The question should be printed beforehand
+    If needed, provide a default response if the confirmation dialog fails to show (multi-threaded).
+    :param default_resp: What to default to if the prompt cant display
+    :type default_resp: bool
+    :return:
+    """
+    try:
+        while True:
+            user_input = input("Please confirm [y,n]: ")
+            user_input = user_input.strip()
+            user_input = user_input.lower()
+            if user_input == "y" or user_input == "yes":
+                return True
+            elif user_input == "n" or user_input == "no":
+                return False
+            else:
+                print(" ")
+                print("Please enter a yes or no.")
+    except EOFError:
+        print(f"Unable to prompt on console, assuming {default_resp}.")
+        return default_resp
 
 
 def can_be_int(string_to_check):
