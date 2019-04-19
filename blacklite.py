@@ -38,7 +38,10 @@ if version_info<(3,6,0):
     raise RuntimeError("Python 3.6 or a more recent version is required. Detected Python %s.%s" % version_info[:2])
 
 class Blacklite():
-    def __init__(self, app_name):
+    def __init__(self, app_name, ludacris_speed = False):
+        self.ludacris_speed = ludacris_speed
+        if self.ludacris_speed:
+            print(f"ludacris_speed on")
         self.app_name = app_name
         self.db_file = f"{get_working_dir(app_name)}/{self.app_name}.sqlite"
 
@@ -98,86 +101,9 @@ class Blacklite():
         del table_name
 
         # endregion
-        headings = []
-        for key, value in kwargs.items():
-            sanitized_heading = self.__alpha_num_sanitize(key)
-            # Note: To prevent accidental use, we explicitly delete the un-sanitized key variable
-            del key
 
-            if sanitized_heading.lower() == "guid" or sanitized_heading.lower() == "date":
-                # Reserved keywords are forced lowercase every time
-                sanitized_heading = sanitized_heading.lower()
+        query = f"CREATE TABLE IF NOT EXISTS '{sanitized_table_name}' ('guid' TEXT PRIMARY KEY, 'date' TEXT)"
 
-            headings.append(sanitized_heading)
-
-        # Using OrderedDict to instantly create a deduped list, then typecasting it back to as list for comparison
-        deduped_headings = list(OrderedDict.fromkeys(headings))
-        if len(deduped_headings) != len(headings):
-            raise ValueError("A field keyword was duplicated after sanitization. Please Debug.")
-
-        # Memory space cleanup, we use deduped_headings going forward
-        del headings
-
-        # Find reserved keywords and reorder list as needed
-        order = []
-        # We have 2 reserved keywords (guid and date) so start normal indexes at 2, like a reserved IP block in DHCP
-        list_index = 2
-        guid_found = False
-        date_found = False
-        for heading in deduped_headings:
-            if heading == "guid":
-                # Fixed list index 0
-                order.append(0)
-                guid_found = True
-            elif heading == "date":
-                # Fixed list index 1
-                order.append(1)
-                date_found = True
-            else:
-                order.append(list_index)
-                # Only increment if we use a standard list_index
-                list_index = list_index + 1
-
-        # date is added if not found in the given headings, since we will simply use epoc time if none is given
-        if not date_found:
-            # Fixed list index 1
-            order.append(1)
-            deduped_headings.append("date")
-
-        if not guid_found:
-            raise ValueError("guid is a required keyword and was not found after sanitization and dedupe. Please Debug.")
-
-        # Rebuild the headings with designated orderings, then delete the old list to keep memory space clean
-        re_ordered_headings = [deduped_headings[item] for item in order]
-        del deduped_headings
-        del order
-
-        # Finally build the finished query needed to create the table
-        # It will look similar to this example, including guid, date, and each heading with a TEXT SQL typecast
-        # query = f"CREATE TABLE IF NOT EXISTS {sanitized_table_name} (guid INTEGER PRIMARY KEY, date TEXT, hostname TEXT, ip TEXT, mac TEXT)"
-        #guid INTEGER PRIMARY KEY, date TEXT, hostname TEXT, ip TEXT, mac TEXT)
-        query = f"CREATE TABLE IF NOT EXISTS `{sanitized_table_name}` ("
-        # Instead of adding the comma at the end of the loop, we add it at the beginning and simply have a special first
-        first_element = True
-        for heading in re_ordered_headings:
-            if first_element:
-                first_element = False
-            else:
-                # This way we don't need to remove a trailing comma and space in the query after loop completion
-                query = f"{query}, "
-
-            if heading == "guid":
-                typecast = "TEXT PRIMARY KEY"
-            elif heading == "date":
-                # Dont need this, but if for some reason the type needs to be changed for a specific item, this is how
-                typecast = "TEXT"
-            else:
-                typecast = "TEXT"
-            query = f"{query}`{heading}` {typecast}"
-        # Add the closing parenthesis to the query
-        query = f"{query})"
-
-        # Minimizing cycles with DB open in memory front-load all operations, then get in, get out
         sqlite_connection = sqlite3.connect(self.db_file)
         with sqlite_connection:
             db_create_cursor = sqlite_connection.cursor()
@@ -467,7 +393,7 @@ class Blacklite():
 
         # Note: "INSERT OR REPLACE" gives this function the ability to overwrite existing matching guids
         # Building: >>"INSERT INTO {sanitized_table_name} (<<date, guid, hostname, ip, mac) VALUES (?, ?, ?, ?, ?)"
-        query = f"INSERT OR REPLACE INTO {sanitized_table_name} ("
+        query = f"INSERT OR REPLACE INTO '{sanitized_table_name}' ("
         # Instead of adding the comma at the end of the loop, we add it at the beginning and simply have a special first
         first_element = True
         guid_found = False
@@ -482,7 +408,7 @@ class Blacklite():
                 # This way we don't need to remove a trailing comma and space in the query after loop completion
                 query = f"{query}, "
 
-            sanitized_heading = self.self.__sql_sanitize(key)
+            sanitized_heading = self.__alpha_num_sanitize(key)
             # Note: To prevent accidental use, we explicitly delete the un-sanitized key variable
             del key
 
@@ -511,7 +437,7 @@ class Blacklite():
             # endregion
 
 
-            query = f"{query}{sanitized_heading}"
+            query = f"{query}'{sanitized_heading}'"
 
 
         # date is added if not found in the given headings, since we will simply use epoc time if none is given
@@ -548,7 +474,10 @@ class Blacklite():
 
         # Minimizing cycles with DB open in memory front-load all operations, then get in, get out, but...
         # we need to handle a few exception cases to automatically extend the database schema as needed
-        sqlite_connection = sqlite3.connect(self.db_file)
+        if self.ludacris_speed:
+            sqlite_connection = sqlite3.connect(self.db_file, isolation_level='DEFERRED')
+        else:
+            sqlite_connection = sqlite3.connect(self.db_file)
         with sqlite_connection:
             db_write_cursor = sqlite_connection.cursor()
             try_again = True
@@ -571,12 +500,17 @@ class Blacklite():
                         db_write_cursor.execute(schema_update_query)
                         sqlite_connection.commit()
                         attempts = attempts + 1
+                        if attempts >= 90:
+                            time.sleep((attempts/10)-8.5)  # Arbitrary sleep timer for this thread
+                            # Just in case it's a resource contention issue, sleeping for increasingly longer times
                         if attempts >= 100:
                             raise KeyError(f"After {attempts} attempts, the schema still reports missing headings. Giving up!")
                     else:
                         raise KeyError(f"Unable to append schema. Original error was: sqlite3.OperationalError: {error_text}")
-            sqlite_connection.commit()
-        sqlite_connection.close()
+            if not self.ludacris_speed:
+                sqlite_connection.commit()
+        if not self.ludacris_speed:
+            sqlite_connection.close()
         return None
 
     def __build_child_db_if_needed(self, child_table, parent_guid, parent_table, **kwargs):
@@ -1042,5 +976,5 @@ class Blacklite():
 
 
 if __name__ == "__main__":
-    the_db = Blacklite("xerxes")
+    the_db = Blacklite("blacklite_testdb")
     the_db.write("shodan", guid=12333456789, scarry="yes", bah="no orange peeeeel!", penacilin="good", pie="over there")

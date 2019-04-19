@@ -16,29 +16,16 @@
 from sys import version_info
 import getpass
 import requests
-import sys
 import json
-import sys
 import re
-import os
-import errno
-import tempfile
 import hashlib
 import time
-import ipaddress
 import math
-import zlib
-import base64
-import datetime
 import pprint
 import sqlite3
-import paramiko
-from io import StringIO
-import collections
-import struct
-from dateutil.relativedelta import relativedelta
+import csv
 import multiprocessing
-from multiprocessing import Pool, TimeoutError
+# from multiprocessing import Pool, TimeoutError
 from modblack2 import get_working_dir, http_status_code, is_dir_writable, progress_bar, can_be_int, get_date_time_string, \
     calc_elapsed_minutes, shroud, de_shroud, aes_crypt, aes_decrypt, read_json_file, confirm, confirm_yn, \
     write_json_file, ask_console, console_notice
@@ -57,36 +44,37 @@ __license__ = "Apache 2.0"
 # For a primer on it's use visit: https://www.jetbrains.com/help/pycharm/using-docstrings-to-specify-types.html
 # PEP-257: https://www.python.org/dev/peps/pep-0257/
 
-if version_info<(3,6,0):
-    raise RuntimeError("Python 3.6 or a more recent version is required. Detected Python %s.%s" % version_info[:2])
-
-# pip install sshtunnel
-# pip install pymongo
-# pip install paramiko
-
 # region TLS/SSL Self-signed certificate bypass
-# TODO: Remove this TLS security bypass region
-from requests.packages.urllib3.exceptions import InsecureRequestWarning
-
-requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
+# from requests.packages.urllib3.exceptions import InsecureRequestWarning
+#
+# requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 # endregion
 
 class Xerxes():
     def __init__(self):
-        if (sys.version_info[0] < 3) or ((sys.version_info[0] == 3) and (sys.version_info[1] < 6)):
-            raise Exception("Python 3.6 or a more recent version is required.")
+        if version_info < (3, 6, 0):
+            raise RuntimeError(
+                "Python 3.6 or a more recent version is required. Detected Python %s.%s" % version_info[:2])
+        # Set self.demo_mode to True and use Shodan paid query credits. Set to False and operate safely without fees
+        self.demo_mode = True
 
         self.app_name="xerxes"
+        self.xerxes_listener_api_url = "https://127.0.0.1:9001/post"
+        self.max_parallelism = 10
         # self.shodan_api_key = "00000000000000000000000000000000"
         # URL should end with trailing slash /
         self.shodan_url = "https://api.shodan.io/"
         self.xerxes_working_dir = get_working_dir(self.app_name)
         self.settings_standalone_file = "xerxes-settings.json"
         self.xerxes_output = f"{self.xerxes_working_dir}\\xerxes_data.json"
-        self.xerxes_db = f"{self.xerxes_working_dir}\\xerxes_data.sqlite"
+        self.xerxes_db = f"{self.xerxes_working_dir}\\xerxes.sqlite"
+        self.xerxes_csv = f"{self.xerxes_working_dir}\\xerxes_{get_date_time_string()}.csv"
         is_dir_writable(self.xerxes_working_dir)
         # TODO: remove main() from init and setup proper class for xerxes
-        self.db = Blacklite(self.app_name)
+        self.db = Blacklite(self.app_name, False)
+        self.total_pages = 0
+        if self.demo_mode:
+            console_notice("DEMO MODE IS ENABLED- Free Shodan use, but only first 100 results loaded!")
         self.main()
 
     def validate_shodan_auth(self):
@@ -111,11 +99,6 @@ class Xerxes():
                 self.settings_dict['al_p'] = entry
                 del entry
             write_json_file(self.settings_file, self.settings_dict)
-
-
-    # date_object = datetime.date.today() + relativedelta(months=-max_event_age_months)
-    # max_event_age = datetime.datetime(date_object.year, date_object.month, date_object.day)
-    # del date_object
 
     def write_json_file(self, json_file, dict_to_write):
         """
@@ -144,7 +127,6 @@ class Xerxes():
             filtered = filtered.replace('\n', ' ').replace('\r', '')
         return filtered
 
-
     def recursive_dict_scan(self, input_dict):
         for key, value in input_dict.items():
             if isinstance(value, dict):
@@ -152,7 +134,6 @@ class Xerxes():
             else:
                 input_dict[key] = self.filter_text(value)
         return input_dict
-
 
     def recursive_list_scan(self, raw_list):
         if isinstance(raw_list, list):
@@ -163,7 +144,6 @@ class Xerxes():
             return new_list
         else:
             return raw_list
-
 
     def recursive_object_scan(self, raw_object):
         if isinstance(raw_object, dict):
@@ -236,14 +216,22 @@ class Xerxes():
                 if method == "get":
                     response = requests.get(f"{self.shodan_url}{endpoint}", headers=headers, params=parameters,
                                             data=json.dumps(payload), verify=True)
-                    break
+                    if response.status_code == 503:
+                        # Rate limiter in Shodan, they want a max of 1 query per second
+                        time.sleep(0.2)
+                    else:
+                        break
                 elif method == "post":
                     response = requests.post(f"{self.shodan_url}{endpoint}", headers=headers, params=parameters,
                                              data=json.dumps(payload), verify=True)
-                    break
+                    if response.status_code == 503:
+                        # Rate limiter in Shodan, they want a max of 1 query per second
+                        time.sleep(0.2)
+                    else:
+                        break
                 else:
                     console_notice(f" Invalid Method passed to shodan_api_query:  {method}")
-                    raise ValueError("Invalid Method passed to shodan_api_query:  {method}")
+                    raise ValueError(f"Invalid Method passed to shodan_api_query:  {method}")
 
             except (
             requests.exceptions.ConnectTimeout, requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError):
@@ -258,23 +246,51 @@ class Xerxes():
             print("\n\r```\n\r")
             if not confirm(prompt='Continue execution?', resp=True):
                 raise ConnectionError(
-                    "Shodan API returned an error HTTP {response.status_code}- {http_status_code(response.status_code)}")
+                    f"Shodan API returned an error HTTP {response.status_code}- {http_status_code(response.status_code)}")
 
         return response
 
-
-    def shodan_info(self):
+    def shodan_info(self, pages_to_be_used = 0):
 
         response = self.shodan_api_query("api-info")
-        pp = pprint.PrettyPrinter(indent=4)
-        pp.pprint(json.loads(response.text))
-        print()
+        json_results = json.loads(response.text)
+        cleaned_json_results = self.recursive_object_scan(json_results)
+        credits_max = cleaned_json_results['usage_limits']['query_credits']
+        credits_avail = cleaned_json_results['query_credits']
+        if pages_to_be_used > 0 and credits_max >= 0:
+            if credits_avail > pages_to_be_used:
+                print(f"This account has {credits_avail} Shodan Query credits remaining")
+                print(f"The requested query will use {pages_to_be_used} and will not return all results.")
+                print("Would you like to proceed with the Shodan query?")
+                if confirm_yn():
+                    print("Good luck!")
+                    return True
+                else:
+                    raise ConnectionAbortedError("This Shodan account does not have enough query credits to finish.")
+            else:
+                console_notice(f"This Shodan account will have {credits_avail-pages_to_be_used} query credits remaining after this run.")
+                return True
+        else:
+            if credits_max == -1:
+                console_notice(f"Shodan link successful with UNLIMITED query credits.")
+            else:
+                console_notice(f"Shodan link successful with {credits_avail} of {credits_max} query credits.")
+            return True
 
-    def shodan_search(self, query, facets=""):
+
+        # pp = pprint.PrettyPrinter(indent=4)
+        # pp.pprint(json.loads(response.text))
+
+    def shodan_search(self, query, facets="", page=1):
+        console_notice(f"SHODAN QUERY AGAINST PAGE {page}")
+        if self.demo_mode:
+            # Force only first page of results which Shodan does not charge query credits for
+            page = 1
         if len(facets) < 1:
             parameters = {
                 "query": query,
-                "facets": facets
+                "facets": facets,
+                "page": page
             }
             response = self.shodan_api_query("shodan/host/search", params=parameters )
         else:
@@ -286,7 +302,42 @@ class Xerxes():
         # print()
         return response.text
 
-    def main(self):
+    def __last_resort_json_repair(self,s):
+        """
+        Trys a few ways to get a usable JSON object from the string given.
+        Only use this as a actual last resort. Very Ugly.
+        :param s: string to attempt to parse into JSON
+        :type s: str
+        :return: A JSON object, blank if no object could be made
+        :rtype: object
+        """
+        attempts = 0
+        max_attempts = 100
+        while True:
+            try:
+                result = json.loads(s)  # try to parse...
+                break  # parsing worked -> exit loop
+            except Exception as e:
+                # "Expecting , delimiter: line 34 column 54 (char 1158)"
+                # position of unexpected character after '"'
+                unexp = int(re.findall(r'\(char (\d+)\)', str(e))[0])
+                # position of unescaped '"' before that
+                unesc = s.rfind(r'"', 0, unexp)
+                s = s[:unesc] + r'\"' + s[unesc + 1:]
+                # position of correspondig closing '"' (+2 for inserted '\')
+                closg = s.find(r'"', unesc + 2)
+                s = s[:closg] + r'\"' + s[closg + 1:]
+            attempts = attempts + 1
+            if attempts > max_attempts:
+                return json.loads("{}")  # Giving up and returning blank object
+        return result
+
+    def process_shodan_page(self, page_num):
+        # Shodan starts pages at 1 rather than 0 for some reason. So we must raise our iterator accordingly
+        page_num = page_num + 1
+
+        console_notice(f"WORKER STARTING PAGE {page_num} of {self.total_pages}")
+        processed_in_this_thread = 0
         def has_key(dict_object, key_to_check_for):
             try:
                 test = dict_object[key_to_check_for]
@@ -295,15 +346,35 @@ class Xerxes():
             except KeyError:
                 return False
 
-        print("Shodan Info:")
-        self.shodan_info()
-        print("Reading Shodan...")
-        results = self.shodan_search("Org:google")
-        json_results = json.loads(results)
+        read_again = True
+        attempts = 0
+        attempts_max = 5
+        while read_again:
+            good_read = False
+            try:
+                results = self.shodan_search(self.query_string, "", page_num)
+                good_read = True
+            except ConnectionError:
+                good_read = False
+
+            if good_read:
+                try:
+                    json_results = json.loads(results)
+                    read_again = False  # Good read first time. dont need to repeat
+                except json.decoder.JSONDecodeError:
+                    json_results = self.__last_resort_json_repair(results)
+                    if len(json_results) < 10:  # Got bad JSON read, try again
+                        read_again = True
+            attempts = attempts + 1
+            if attempts > attempts_max:
+                read_again = False  # Too many attempts, give up!
+                #  No good data for this page, master abort on this thread.
+                console_notice(f"WORKER GAVE UP PARSING PAGE {page_num} of {self.total_pages}")
+                return processed_in_this_thread
+
 
         cleaned_json_results = self.recursive_object_scan(json_results)
 
-        # self.write_json_file(self.xerxes_output, cleaned_json_results)
         for discovered_host in cleaned_json_results['matches']:
             guid_set = False
             db_entry = {}
@@ -381,26 +452,214 @@ class Xerxes():
                 if has_key(http_dict, "components"):
                     components_dict = http_dict["components"]
                     for key, value in components_dict.items():
-                        db_entry[f'{key}_exists'] = "1"
+                        db_entry[f'HAS{key}'] = "1"
+
+            processed_in_this_thread = processed_in_this_thread + 1
+
+            print(f"{db_entry['guid']}")
+
+            try:
+                self.db.write("shodan", **db_entry)
+            except KeyError:
+                console_notice(f"WORKER GAVE UP WRITING TO DB on page {page_num} of {self.total_pages}")
+                return processed_in_this_thread
+        return processed_in_this_thread
+
+    def key_reader_by_page(self, page_num):
+        thread_results_list = []
+        # Shodan starts pages at 1 rather than 0 for some reason. So we must raise our iterator accordingly
+        page_num = page_num + 1
+
+        console_notice(f"WORKER STARTING PAGE {page_num}")
+        processed_in_this_thread = 0
+        def has_key(dict_object, key_to_check_for):
+            try:
+                test = dict_object[key_to_check_for]
+                del test
+                return True
+            except KeyError:
+                return False
+
+        results = self.shodan_search(self.query_string, "", page_num)
+        json_results = json.loads(results)
+
+        cleaned_json_results = self.recursive_object_scan(json_results)
+
+        for discovered_host in cleaned_json_results['matches']:
+            guid_set = False
+            db_entry = {}
+            if has_key(discovered_host, "ip_str"):
+                db_entry['guid'] = discovered_host["ip_str"]
+                if has_key(discovered_host, "product"):
+                    db_entry['guid'] = f"{db_entry['guid']}_{discovered_host['product']}"
+                    db_entry['product'] = discovered_host["product"]
+                else:
+                    db_entry['product'] = ""
+
+                if has_key(discovered_host, "transport"):
+                    db_entry['guid'] = f"{db_entry['guid']}_on_{discovered_host['transport']}"
+                    db_entry['transport'] = discovered_host["transport"]
+                else:
+                    db_entry['transport'] = ""
+
+                if has_key(discovered_host, "port"):
+                    db_entry['guid'] = f"{db_entry['guid']}{discovered_host['port']}"
+                    db_entry['port'] = discovered_host["port"]
+                else:
+                    db_entry['port'] = ""
+
+                guid_set = True
+
+            if has_key(discovered_host, "timestamp"):
+                db_entry['updated'] = discovered_host["timestamp"]
+            else:
+                db_entry['updated'] = ""
+
+            if has_key(discovered_host, "version"):
+                db_entry['version'] = discovered_host["version"]
+            else:
+                db_entry['version'] = ""
+
+            if has_key(discovered_host, "hostnames"):
+                hostname_string = ""
+                for item in discovered_host["hostnames"]:
+                    if len(hostname_string) < 2:
+                        hostname_string = f"{item}"
+                    else:
+                        hostname_string = f"{hostname_string}, {item}"
+                db_entry['hostnames'] = hostname_string
+            else:
+                db_entry['hostnames'] = ""
+
+            if has_key(discovered_host, "os"):
+                db_entry['os'] = discovered_host["os"]
+            else:
+                db_entry['os'] = ""
+
+            if has_key(discovered_host, "ip_str"):
+                db_entry['ip'] = discovered_host["ip_str"]
+            else:
+                db_entry['ip'] = ""
+
+            if has_key(discovered_host, "asn"):
+                db_entry['asn'] = discovered_host["asn"]
+            else:
+                db_entry['asn'] = ""
+
+            if has_key(discovered_host, "org"):
+                db_entry['org'] = discovered_host["org"]
+            else:
+                db_entry['org'] = ""
+
+            if has_key(discovered_host, "isp"):
+                db_entry['isp'] = discovered_host["isp"]
+            else:
+                db_entry['isp'] = ""
+
+            if has_key(discovered_host, "http"):
+                http_dict = discovered_host["http"]
+
+                if has_key(http_dict, "components"):
+                    components_dict = http_dict["components"]
+                    for key, value in components_dict.items():
+                        db_entry[f'HAS{key}'] = "1"
+
+            processed_in_this_thread = processed_in_this_thread + 1
+
+            print(f"{db_entry['guid']}")
+
+            # hashed_db_entry = self.build_json_payload(db_entry)
+            # try_again = True
+            # while try_again:
+            #     try:
+            #         requests.post(self.xerxes_listener_api_url, json=hashed_db_entry, verify=False)
+            #         try_again = False
+            #     except requests.exceptions.ConnectionError:
+            #         try_again = True
+            # del try_again
+            for key, value in db_entry.items():
+                thread_results_list.append(key)
+                # self.db.write("shodan", **db_entry)
+        return thread_results_list
+
+    def to_csv(self):
+        def dict_from_row(row):
+            return dict(zip(row.keys(), row))
+
+        if confirm("Dump SQLite database to CSV?", False):
+
+            sqlite_connection = sqlite3.connect(self.xerxes_db)
+
+            # db_read_cursor = sqlite_connection.cursor()
+            sqlite_connection.row_factory = sqlite3.Row
+            db_read_cursor = sqlite_connection.execute(f'select * from shodan')
+
+            with open(self.xerxes_csv, 'w', newline='') as file_object:
+                row = db_read_cursor.fetchone()
+                column_headers_list = row.keys()
+
+                writer_for_dicts = csv.DictWriter(file_object, fieldnames=column_headers_list)
+                writer_for_dicts.writeheader()
+
+                while row is not None:
+                    row_as_dict = dict_from_row(row)
+                    writer_for_dicts.writerow(row_as_dict)
+                    row = db_read_cursor.fetchone()
+            print(f"CSV written to {self.xerxes_csv}")
+            return True
+
+    def main(self):
+        print("Reading Shodan...")
+
+        self.query_string = "Org:google"
+
+        # Initial read to determine number of pages
+        results = self.shodan_search(self.query_string)
+        json_results = json.loads(results)
+
+        cleaned_json_results = self.recursive_object_scan(json_results)
+
+        # Shodan processes 100 results per page
+        self.total_pages = math.ceil(cleaned_json_results['total'] / 100)
+
+        if self.demo_mode:
+            # Force only first page of results which Shodan does not charge query credits for
+            self.total_pages = 1
 
 
-            self.db.write("shodan", **db_entry)
+        self.shodan_info(self.total_pages)
 
+        print(f"Total pages: {self.total_pages}")
+        print(f"Total app entries: {cleaned_json_results['total']}")
 
-        # sqlite_connection = sqlite3.connect(self.xerxes_db)
-        # sqlite_connection.enable_load_extension(True)
-        # sqlite_connection.load_extension("./json1")
-        # with sqlite_connection:
-        #     db_create_cursor = sqlite_connection.cursor()
-        #     db_create_cursor.execute(query)
-        #     sqlite_connection.commit()
+        worker_returned_processed_count = 0
 
+        # region Single-threaded operation mode
+        # for page_num in range(0, self.total_pages):
+        #     processed_count = self.process_shodan_page(page_num)
+        #     worker_returned_processed_count = worker_returned_processed_count + processed_count
+        # endregion Single-threaded operation mode
 
-        #pp = pprint.PrettyPrinter(indent=4)
-        #pp.pprint(cleaned_json_results)
+        # region Multi-threaded operation mode
+        pool = multiprocessing.Pool(processes=self.max_parallelism)
+        async_results = [pool.apply_async(self.process_shodan_page, args=(page_num,)) for page_num in
+                         range(0, self.total_pages)]
+
+        for result in async_results:
+            worker_return = result.get()
+            worker_returned_processed_count = worker_returned_processed_count + worker_return
+        # endregion Multi-threaded operation mode
+
+        print(f"{worker_returned_processed_count} host applications processed by workers.")
+        print(f"{cleaned_json_results['total']} reported host application results by Shodan.")
 
         self.shodan_info()
-        print("Complete")
+        print("Shodan data retrieval Complete")
+        self.to_csv()
+        print("All processes complete")
+
+
+
 
 if __name__ == "__main__":
     Xerxes()
