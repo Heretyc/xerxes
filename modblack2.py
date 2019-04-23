@@ -176,7 +176,7 @@ def console_notice(notice_text):
     :return: no returns
     :rtype: none
     """
-    print(f"{get_time_string()}- {notice_text}")
+    print(f"\n\r{get_time_string()}- {notice_text}")
 
 
 def get_date_time_string(no_hours_mins=False):

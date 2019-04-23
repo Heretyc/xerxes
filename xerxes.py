@@ -50,16 +50,24 @@ __license__ = "Apache 2.0"
 # requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 # endregion
 
+import urllib3
+from packaging.version import Version
+# Module version checking compliant with PEP 440 - https://www.python.org/dev/peps/pep-0440/
+# For questions contact https://keybase.io/blackburnhax
+if Version(urllib3.__version__) < Version('1.24.2'):
+    raise ImportError('Attempted to import URLLib3 insecure version vulnerable to CVE-2019-11324')
+
 class Xerxes():
-    def __init__(self):
+    def __init__(self, query_string):
         if version_info < (3, 6, 0):
             raise RuntimeError(
                 "Python 3.6 or a more recent version is required. Detected Python %s.%s" % version_info[:2])
         # Set self.demo_mode to True and use Shodan paid query credits. Set to False and operate safely without fees
-        self.demo_mode = True
+        self.demo_mode = False
+
+        self.query_string = query_string
 
         self.app_name="xerxes"
-        self.xerxes_listener_api_url = "https://127.0.0.1:9001/post"
         self.max_parallelism = 10
         # self.shodan_api_key = "00000000000000000000000000000000"
         # URL should end with trailing slash /
@@ -73,9 +81,10 @@ class Xerxes():
         # TODO: remove main() from init and setup proper class for xerxes
         self.db = Blacklite(self.app_name, False)
         self.total_pages = 0
-        if self.demo_mode:
-            console_notice("DEMO MODE IS ENABLED- Free Shodan use, but only first 100 results loaded!")
-        self.main()
+        if self.query_string == "to_csv":
+            self.to_csv()
+        else:
+            self.main()
 
     def validate_shodan_auth(self):
             self.settings_file = f"{self.xerxes_working_dir}/{self.settings_standalone_file}"
@@ -272,7 +281,8 @@ class Xerxes():
                 return True
         else:
             if credits_max == -1:
-                console_notice(f"Shodan link successful with UNLIMITED query credits.")
+                # console_notice(f"Shodan link successful with UNLIMITED query credits.")
+                pass
             else:
                 console_notice(f"Shodan link successful with {credits_avail} of {credits_max} query credits.")
             return True
@@ -282,7 +292,7 @@ class Xerxes():
         # pp.pprint(json.loads(response.text))
 
     def shodan_search(self, query, facets="", page=1):
-        console_notice(f"SHODAN QUERY AGAINST PAGE {page}")
+        # console_notice(f"SHODAN QUERY AGAINST PAGE {page}")
         if self.demo_mode:
             # Force only first page of results which Shodan does not charge query credits for
             page = 1
@@ -456,7 +466,7 @@ class Xerxes():
 
             processed_in_this_thread = processed_in_this_thread + 1
 
-            print(f"{db_entry['guid']}")
+            # print(f"{db_entry['guid']}")
 
             try:
                 self.db.write("shodan", **db_entry)
@@ -582,12 +592,29 @@ class Xerxes():
                 # self.db.write("shodan", **db_entry)
         return thread_results_list
 
+    def count_db(self):
+        print("Indexing DB...")
+        sqlite_connection = sqlite3.connect(self.xerxes_db)
+
+        sqlite_connection.row_factory = sqlite3.Row
+        db_read_cursor = sqlite_connection.execute(f'select * from shodan')
+        count = 0
+        row = db_read_cursor.fetchone()
+        # Yes this is slow and clunky, but it is consistent and easy to debug.
+        while row is not None:
+            if count % 10000 == 0:
+                print(f"Entries: {count}")
+            count = count + 1
+            row = db_read_cursor.fetchone()
+        print(f"Entries: {count}")
+        return count
+
     def to_csv(self):
         def dict_from_row(row):
             return dict(zip(row.keys(), row))
 
         if confirm("Dump SQLite database to CSV?", False):
-
+            total_items = self.count_db()
             sqlite_connection = sqlite3.connect(self.xerxes_db)
 
             # db_read_cursor = sqlite_connection.cursor()
@@ -600,18 +627,22 @@ class Xerxes():
 
                 writer_for_dicts = csv.DictWriter(file_object, fieldnames=column_headers_list)
                 writer_for_dicts.writeheader()
-
+                processed_items = 0
+                console_notice("Writing to CSV...")
                 while row is not None:
+                    processed_items = processed_items + 1
+                    if processed_items % 1000 == 0:
+                        progress_bar(processed_items, total_items, 25)
                     row_as_dict = dict_from_row(row)
                     writer_for_dicts.writerow(row_as_dict)
                     row = db_read_cursor.fetchone()
-            print(f"CSV written to {self.xerxes_csv}")
+            console_notice(f"CSV written to {self.xerxes_csv}")
             return True
 
     def main(self):
-        print("Reading Shodan...")
-
-        self.query_string = "Org:google"
+        if self.demo_mode:
+            console_notice("DEMO MODE IS ENABLED- Free Shodan use, but only first 100 results loaded!")
+        # print("Reading Shodan...")
 
         # Initial read to determine number of pages
         results = self.shodan_search(self.query_string)
@@ -655,11 +686,32 @@ class Xerxes():
 
         self.shodan_info()
         print("Shodan data retrieval Complete")
-        self.to_csv()
+        # self.to_csv()
         print("All processes complete")
 
 
 
 
 if __name__ == "__main__":
-    Xerxes()
+    # Set daemon_mode to True for continuous operation, set to false to run once and stop
+    daemon_mode = True
+    queries = ["Org:google"]
+    while True:
+        iteration = 0
+        for query in queries:
+            console_notice(f"Starting on query {iteration} of {len(queries)} - {query} ")
+            progress_bar(iteration, len(queries))
+            try:
+                Xerxes(query)
+            except Exception as e:
+                console_notice(f" Exception on query {query}: Error was: {str(e)}")
+                print()
+            progress_bar(iteration, len(queries))
+            iteration = iteration + 1
+        if daemon_mode:
+            console_notice(f"ALL QUERIES COMPLETE! Total iterations{iteration}")
+        else:
+            console_notice("ALL QUERIES COMPLETE!")
+            break
+
+    Xerxes("to_csv")
