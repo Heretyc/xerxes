@@ -13,23 +13,23 @@
 #  TL;DR:
 #  For a human-readable & fast explanation of the Apache 2.0 license visit:  http://www.tldrlegal.com/l/apache2
 
-from sys import version_info
-import getpass
-import requests
-import json
-import re
-import hashlib
-import time
-import math
-import pprint
-import sqlite3
 import csv
+import getpass
+import json
+import math
 import multiprocessing
-# from multiprocessing import Pool, TimeoutError
-from modblack2 import get_working_dir, http_status_code, is_dir_writable, progress_bar, can_be_int, get_date_time_string, \
-    calc_elapsed_minutes, shroud, de_shroud, aes_crypt, aes_decrypt, read_json_file, confirm, confirm_yn, \
-    write_json_file, ask_console, console_notice
+import pprint
+import re
+import sqlite3
+import time
+from sys import version_info
+
+import requests
+
 from blacklite import Blacklite
+# from multiprocessing import Pool, TimeoutError
+from modblack2 import (aes_crypt, confirm, confirm_yn, console_notice, de_shroud, get_date_time_string, get_working_dir,
+                       http_status_code, is_dir_writable, progress_bar, read_json_file, write_json_file)
 
 """xerxes.py: Shodan mass data collection system"""
 
@@ -52,24 +52,27 @@ __license__ = "Apache 2.0"
 
 import urllib3
 from packaging.version import Version
+
 # Module version checking compliant with PEP 440 - https://www.python.org/dev/peps/pep-0440/
 # For questions contact https://keybase.io/blackburnhax
-if Version(urllib3.__version__) < Version('1.24.2'):
-    raise ImportError('Attempted to import URLLib3 insecure version vulnerable to CVE-2019-11324')
+if Version(urllib3.__version__) < Version("1.24.2"):
+    raise ImportError("Attempted to import URLLib3 insecure version vulnerable to CVE-2019-11324")
 
-class Xerxes():
+
+class Xerxes:
     def __init__(self, query_string):
         if version_info < (3, 6, 0):
             raise RuntimeError(
-                "Python 3.6 or a more recent version is required. Detected Python %s.%s" % version_info[:2])
+                "Python 3.6 or a more recent version is required. Detected Python %s.%s" % version_info[:2]
+            )
         # Set self.demo_mode to True and use Shodan paid query credits. Set to False and operate safely without fees
         self.demo_mode = False
 
         self.query_string = query_string
 
-        self.app_name="xerxes"
+        self.app_name = "xerxes"
         self.max_parallelism = 10
-        # self.shodan_api_key = "00000000000000000000000000000000"
+        # self.shodan_api_key = "YOUR API KEY"
         # URL should end with trailing slash /
         self.shodan_url = "https://api.shodan.io/"
         self.xerxes_working_dir = get_working_dir(self.app_name)
@@ -87,27 +90,27 @@ class Xerxes():
             self.main()
 
     def validate_shodan_auth(self):
-            self.settings_file = f"{self.xerxes_working_dir}/{self.settings_standalone_file}"
-            settings_dict = read_json_file(self.settings_file)
-            self.settings_dict['al_u'] = settings_dict.get('al_u', "-1")
-            self.settings_dict['al_p'] = settings_dict.get('al_p', "-1")
-            if self.settings_dict['al_u'] == "-1":
-                entry = aes_crypt(de_shroud(self.pin), input("Enter your AlertLogic User Name (Double check first!): "))
-                self.settings_dict['al_u'] = entry
-                del entry
+        self.settings_file = f"{self.xerxes_working_dir}/{self.settings_standalone_file}"
+        settings_dict = read_json_file(self.settings_file)
+        self.settings_dict["al_u"] = settings_dict.get("al_u", "-1")
+        self.settings_dict["al_p"] = settings_dict.get("al_p", "-1")
+        if self.settings_dict["al_u"] == "-1":
+            entry = aes_crypt(de_shroud(self.pin), input("Enter your AlertLogic User Name (Double check first!): "))
+            self.settings_dict["al_u"] = entry
+            del entry
 
-            if self.settings_dict['al_p'] == "-1":
-                while True:
-                    entry = getpass.getpass("Enter your AlertLogic Password: ")
-                    if entry == getpass.getpass("Please re-enter AlertLogic Password to confirm: "):
-                        entry = aes_crypt(de_shroud(self.pin), entry)
-                        break
-                    else:
-                        print("Your passwords did not match, please try again.")
+        if self.settings_dict["al_p"] == "-1":
+            while True:
+                entry = getpass.getpass("Enter your AlertLogic Password: ")
+                if entry == getpass.getpass("Please re-enter AlertLogic Password to confirm: "):
+                    entry = aes_crypt(de_shroud(self.pin), entry)
+                    break
+                else:
+                    print("Your passwords did not match, please try again.")
 
-                self.settings_dict['al_p'] = entry
-                del entry
-            write_json_file(self.settings_file, self.settings_dict)
+            self.settings_dict["al_p"] = entry
+            del entry
+        write_json_file(self.settings_file, self.settings_dict)
 
     def write_json_file(self, json_file, dict_to_write):
         """
@@ -120,11 +123,12 @@ class Xerxes():
         """
         date = get_date_time_string()
         dict_to_write["last_update"] = date
-        with open(json_file, 'w') as f:
+        with open(json_file, "w") as f:
             json.dump(dict_to_write, f, ensure_ascii=False)
 
     def filter_text(self, text, strict=False):
         import string
+
         # Get the difference of all ASCII characters from the set of printable characters
         nonprintable = set([chr(i) for i in range(128)]).difference(string.printable)
         # Use translate to remove all non-printable characters
@@ -133,7 +137,7 @@ class Xerxes():
 
         filtered = text.translate({ord(character): None for character in nonprintable})
         if strict == True:
-            filtered = filtered.replace('\n', ' ').replace('\r', '')
+            filtered = filtered.replace("\n", " ").replace("\r", "")
         return filtered
 
     def recursive_dict_scan(self, input_dict):
@@ -198,7 +202,7 @@ class Xerxes():
         :return: The users response. Yes = True, No = False
         :rtype: bool
         """
-        headers = {"Content-Type": "application/json", 'Accept': 'application/json'}
+        headers = {"Content-Type": "application/json", "Accept": "application/json"}
         method = kwargs.get("method", "get")
         method = method.lower()
 
@@ -211,11 +215,11 @@ class Xerxes():
         # In Py3, it's more performant to ask for forgiveness than permission. So Try/Except
         try:
             # Just testing if it
-            parameters['key']
+            parameters["key"]
         except KeyError:
-            parameters['key'] = self.shodan_api_key
+            parameters["key"] = self.shodan_api_key
 
-        if len(parameters['key']) < 32:
+        if len(parameters["key"]) < 32:
             raise ValueError(f"Shodan api key appears malformed. First 4 chars of the key are: {kwargs['key'][:4]}")
 
         payload = kwargs.get("payload", "{}")
@@ -223,16 +227,26 @@ class Xerxes():
         while True:
             try:
                 if method == "get":
-                    response = requests.get(f"{self.shodan_url}{endpoint}", headers=headers, params=parameters,
-                                            data=json.dumps(payload), verify=True)
-                    if response.status_code == 503:
+                    response = requests.get(
+                        f"{self.shodan_url}{endpoint}",
+                        headers=headers,
+                        params=parameters,
+                        data=json.dumps(payload),
+                        verify=True,
+                    )
+                    if response.status_code == 429:
                         # Rate limiter in Shodan, they want a max of 1 query per second
                         time.sleep(0.2)
                     else:
                         break
                 elif method == "post":
-                    response = requests.post(f"{self.shodan_url}{endpoint}", headers=headers, params=parameters,
-                                             data=json.dumps(payload), verify=True)
+                    response = requests.post(
+                        f"{self.shodan_url}{endpoint}",
+                        headers=headers,
+                        params=parameters,
+                        data=json.dumps(payload),
+                        verify=True,
+                    )
                     if response.status_code == 503:
                         # Rate limiter in Shodan, they want a max of 1 query per second
                         time.sleep(0.2)
@@ -243,29 +257,35 @@ class Xerxes():
                     raise ValueError(f"Invalid Method passed to shodan_api_query:  {method}")
 
             except (
-            requests.exceptions.ConnectTimeout, requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError):
+                requests.exceptions.ConnectTimeout,
+                requests.exceptions.ReadTimeout,
+                requests.exceptions.ConnectionError,
+            ):
                 console_notice(" Packet loss when attempting to reach Shodan API")
         if not response.status_code == requests.codes.ok:
-            print(f"\n\rShodan API returned an error *HTTP {response.status_code}- {http_status_code(response.status_code)}*\n\r*Request sent to endpoint:*\n\r```\n\r{endpoint}\n\r```\n\r\n\r*Payload sent:*\n\r```")
+            print(
+                f"\n\rShodan API returned an error *HTTP {response.status_code}- {http_status_code(response.status_code)}*\n\r*Request sent to endpoint:*\n\r```\n\r{endpoint}\n\r```\n\r\n\r*Payload sent:*\n\r```"
+            )
             pprint.pprint(payload, indent=4)
             print("```\n\r\n\r*Parameters passed:*\n\r```")
             pprint.pprint(parameters, indent=4)
             print("```\n\r\n\r*Server Response:*\n\r```")
             pprint.pprint(response.text, indent=4)
             print("\n\r```\n\r")
-            if not confirm(prompt='Continue execution?', resp=True):
+            if not confirm(prompt="Continue execution?", resp=True):
                 raise ConnectionError(
-                    f"Shodan API returned an error HTTP {response.status_code}- {http_status_code(response.status_code)}")
+                    f"Shodan API returned an error HTTP {response.status_code}- {http_status_code(response.status_code)}"
+                )
 
         return response
 
-    def shodan_info(self, pages_to_be_used = 0):
+    def shodan_info(self, pages_to_be_used=0):
 
         response = self.shodan_api_query("api-info")
         json_results = json.loads(response.text)
         cleaned_json_results = self.recursive_object_scan(json_results)
-        credits_max = cleaned_json_results['usage_limits']['query_credits']
-        credits_avail = cleaned_json_results['query_credits']
+        credits_max = cleaned_json_results["usage_limits"]["query_credits"]
+        credits_avail = cleaned_json_results["query_credits"]
         if pages_to_be_used > 0 and credits_max >= 0:
             if credits_avail > pages_to_be_used:
                 print(f"This account has {credits_avail} Shodan Query credits remaining")
@@ -277,7 +297,9 @@ class Xerxes():
                 else:
                     raise ConnectionAbortedError("This Shodan account does not have enough query credits to finish.")
             else:
-                console_notice(f"This Shodan account will have {credits_avail-pages_to_be_used} query credits remaining after this run.")
+                console_notice(
+                    f"This Shodan account will have {credits_avail-pages_to_be_used} query credits remaining after this run."
+                )
                 return True
         else:
             if credits_max == -1:
@@ -286,7 +308,6 @@ class Xerxes():
             else:
                 console_notice(f"Shodan link successful with {credits_avail} of {credits_max} query credits.")
             return True
-
 
         # pp = pprint.PrettyPrinter(indent=4)
         # pp.pprint(json.loads(response.text))
@@ -297,22 +318,16 @@ class Xerxes():
             # Force only first page of results which Shodan does not charge query credits for
             page = 1
         if len(facets) < 1:
-            parameters = {
-                "query": query,
-                "facets": facets,
-                "page": page
-            }
-            response = self.shodan_api_query("shodan/host/search", params=parameters )
+            parameters = {"query": query, "facets": facets, "page": page}
+            response = self.shodan_api_query("shodan/host/search", params=parameters)
         else:
-            parameters = {
-                "query": query
-            }
+            parameters = {"query": query}
             response = self.shodan_api_query("shodan/host/search", params=parameters)
         # print(response.text)
         # print()
         return response.text
 
-    def __last_resort_json_repair(self,s):
+    def __last_resort_json_repair(self, s):
         """
         Trys a few ways to get a usable JSON object from the string given.
         Only use this as a actual last resort. Very Ugly.
@@ -330,13 +345,13 @@ class Xerxes():
             except Exception as e:
                 # "Expecting , delimiter: line 34 column 54 (char 1158)"
                 # position of unexpected character after '"'
-                unexp = int(re.findall(r'\(char (\d+)\)', str(e))[0])
+                unexp = int(re.findall(r"\(char (\d+)\)", str(e))[0])
                 # position of unescaped '"' before that
                 unesc = s.rfind(r'"', 0, unexp)
-                s = s[:unesc] + r'\"' + s[unesc + 1:]
+                s = s[:unesc] + r"\"" + s[unesc + 1 :]
                 # position of correspondig closing '"' (+2 for inserted '\')
                 closg = s.find(r'"', unesc + 2)
-                s = s[:closg] + r'\"' + s[closg + 1:]
+                s = s[:closg] + r"\"" + s[closg + 1 :]
             attempts = attempts + 1
             if attempts > max_attempts:
                 return json.loads("{}")  # Giving up and returning blank object
@@ -348,6 +363,7 @@ class Xerxes():
 
         console_notice(f"WORKER STARTING PAGE {page_num} of {self.total_pages}")
         processed_in_this_thread = 0
+
         def has_key(dict_object, key_to_check_for):
             try:
                 test = dict_object[key_to_check_for]
@@ -382,43 +398,42 @@ class Xerxes():
                 console_notice(f"WORKER GAVE UP PARSING PAGE {page_num} of {self.total_pages}")
                 return processed_in_this_thread
 
-
         cleaned_json_results = self.recursive_object_scan(json_results)
 
-        for discovered_host in cleaned_json_results['matches']:
+        for discovered_host in cleaned_json_results["matches"]:
             guid_set = False
             db_entry = {}
             if has_key(discovered_host, "ip_str"):
-                db_entry['guid'] = discovered_host["ip_str"]
+                db_entry["guid"] = discovered_host["ip_str"]
                 if has_key(discovered_host, "product"):
-                    db_entry['guid'] = f"{db_entry['guid']}_{discovered_host['product']}"
-                    db_entry['product'] = discovered_host["product"]
+                    db_entry["guid"] = f"{db_entry['guid']}_{discovered_host['product']}"
+                    db_entry["product"] = discovered_host["product"]
                 else:
-                    db_entry['product'] = ""
+                    db_entry["product"] = ""
 
                 if has_key(discovered_host, "transport"):
-                    db_entry['guid'] = f"{db_entry['guid']}_on_{discovered_host['transport']}"
-                    db_entry['transport'] = discovered_host["transport"]
+                    db_entry["guid"] = f"{db_entry['guid']}_on_{discovered_host['transport']}"
+                    db_entry["transport"] = discovered_host["transport"]
                 else:
-                    db_entry['transport'] = ""
+                    db_entry["transport"] = ""
 
                 if has_key(discovered_host, "port"):
-                    db_entry['guid'] = f"{db_entry['guid']}{discovered_host['port']}"
-                    db_entry['port'] = discovered_host["port"]
+                    db_entry["guid"] = f"{db_entry['guid']}{discovered_host['port']}"
+                    db_entry["port"] = discovered_host["port"]
                 else:
-                    db_entry['port'] = ""
+                    db_entry["port"] = ""
 
                 guid_set = True
 
             if has_key(discovered_host, "timestamp"):
-                db_entry['updated'] = discovered_host["timestamp"]
+                db_entry["updated"] = discovered_host["timestamp"]
             else:
-                db_entry['updated'] = ""
+                db_entry["updated"] = ""
 
             if has_key(discovered_host, "version"):
-                db_entry['version'] = discovered_host["version"]
+                db_entry["version"] = discovered_host["version"]
             else:
-                db_entry['version'] = ""
+                db_entry["version"] = ""
 
             if has_key(discovered_host, "hostnames"):
                 hostname_string = ""
@@ -427,34 +442,34 @@ class Xerxes():
                         hostname_string = f"{item}"
                     else:
                         hostname_string = f"{hostname_string}, {item}"
-                db_entry['hostnames'] = hostname_string
+                db_entry["hostnames"] = hostname_string
             else:
-                db_entry['hostnames'] = ""
+                db_entry["hostnames"] = ""
 
             if has_key(discovered_host, "os"):
-                db_entry['os'] = discovered_host["os"]
+                db_entry["os"] = discovered_host["os"]
             else:
-                db_entry['os'] = ""
+                db_entry["os"] = ""
 
             if has_key(discovered_host, "ip_str"):
-                db_entry['ip'] = discovered_host["ip_str"]
+                db_entry["ip"] = discovered_host["ip_str"]
             else:
-                db_entry['ip'] = ""
+                db_entry["ip"] = ""
 
             if has_key(discovered_host, "asn"):
-                db_entry['asn'] = discovered_host["asn"]
+                db_entry["asn"] = discovered_host["asn"]
             else:
-                db_entry['asn'] = ""
+                db_entry["asn"] = ""
 
             if has_key(discovered_host, "org"):
-                db_entry['org'] = discovered_host["org"]
+                db_entry["org"] = discovered_host["org"]
             else:
-                db_entry['org'] = ""
+                db_entry["org"] = ""
 
             if has_key(discovered_host, "isp"):
-                db_entry['isp'] = discovered_host["isp"]
+                db_entry["isp"] = discovered_host["isp"]
             else:
-                db_entry['isp'] = ""
+                db_entry["isp"] = ""
 
             if has_key(discovered_host, "http"):
                 http_dict = discovered_host["http"]
@@ -462,7 +477,7 @@ class Xerxes():
                 if has_key(http_dict, "components"):
                     components_dict = http_dict["components"]
                     for key, value in components_dict.items():
-                        db_entry[f'HAS{key}'] = "1"
+                        db_entry[f"HAS{key}"] = "1"
 
             processed_in_this_thread = processed_in_this_thread + 1
 
@@ -482,6 +497,7 @@ class Xerxes():
 
         console_notice(f"WORKER STARTING PAGE {page_num}")
         processed_in_this_thread = 0
+
         def has_key(dict_object, key_to_check_for):
             try:
                 test = dict_object[key_to_check_for]
@@ -495,40 +511,40 @@ class Xerxes():
 
         cleaned_json_results = self.recursive_object_scan(json_results)
 
-        for discovered_host in cleaned_json_results['matches']:
+        for discovered_host in cleaned_json_results["matches"]:
             guid_set = False
             db_entry = {}
             if has_key(discovered_host, "ip_str"):
-                db_entry['guid'] = discovered_host["ip_str"]
+                db_entry["guid"] = discovered_host["ip_str"]
                 if has_key(discovered_host, "product"):
-                    db_entry['guid'] = f"{db_entry['guid']}_{discovered_host['product']}"
-                    db_entry['product'] = discovered_host["product"]
+                    db_entry["guid"] = f"{db_entry['guid']}_{discovered_host['product']}"
+                    db_entry["product"] = discovered_host["product"]
                 else:
-                    db_entry['product'] = ""
+                    db_entry["product"] = ""
 
                 if has_key(discovered_host, "transport"):
-                    db_entry['guid'] = f"{db_entry['guid']}_on_{discovered_host['transport']}"
-                    db_entry['transport'] = discovered_host["transport"]
+                    db_entry["guid"] = f"{db_entry['guid']}_on_{discovered_host['transport']}"
+                    db_entry["transport"] = discovered_host["transport"]
                 else:
-                    db_entry['transport'] = ""
+                    db_entry["transport"] = ""
 
                 if has_key(discovered_host, "port"):
-                    db_entry['guid'] = f"{db_entry['guid']}{discovered_host['port']}"
-                    db_entry['port'] = discovered_host["port"]
+                    db_entry["guid"] = f"{db_entry['guid']}{discovered_host['port']}"
+                    db_entry["port"] = discovered_host["port"]
                 else:
-                    db_entry['port'] = ""
+                    db_entry["port"] = ""
 
                 guid_set = True
 
             if has_key(discovered_host, "timestamp"):
-                db_entry['updated'] = discovered_host["timestamp"]
+                db_entry["updated"] = discovered_host["timestamp"]
             else:
-                db_entry['updated'] = ""
+                db_entry["updated"] = ""
 
             if has_key(discovered_host, "version"):
-                db_entry['version'] = discovered_host["version"]
+                db_entry["version"] = discovered_host["version"]
             else:
-                db_entry['version'] = ""
+                db_entry["version"] = ""
 
             if has_key(discovered_host, "hostnames"):
                 hostname_string = ""
@@ -537,34 +553,34 @@ class Xerxes():
                         hostname_string = f"{item}"
                     else:
                         hostname_string = f"{hostname_string}, {item}"
-                db_entry['hostnames'] = hostname_string
+                db_entry["hostnames"] = hostname_string
             else:
-                db_entry['hostnames'] = ""
+                db_entry["hostnames"] = ""
 
             if has_key(discovered_host, "os"):
-                db_entry['os'] = discovered_host["os"]
+                db_entry["os"] = discovered_host["os"]
             else:
-                db_entry['os'] = ""
+                db_entry["os"] = ""
 
             if has_key(discovered_host, "ip_str"):
-                db_entry['ip'] = discovered_host["ip_str"]
+                db_entry["ip"] = discovered_host["ip_str"]
             else:
-                db_entry['ip'] = ""
+                db_entry["ip"] = ""
 
             if has_key(discovered_host, "asn"):
-                db_entry['asn'] = discovered_host["asn"]
+                db_entry["asn"] = discovered_host["asn"]
             else:
-                db_entry['asn'] = ""
+                db_entry["asn"] = ""
 
             if has_key(discovered_host, "org"):
-                db_entry['org'] = discovered_host["org"]
+                db_entry["org"] = discovered_host["org"]
             else:
-                db_entry['org'] = ""
+                db_entry["org"] = ""
 
             if has_key(discovered_host, "isp"):
-                db_entry['isp'] = discovered_host["isp"]
+                db_entry["isp"] = discovered_host["isp"]
             else:
-                db_entry['isp'] = ""
+                db_entry["isp"] = ""
 
             if has_key(discovered_host, "http"):
                 http_dict = discovered_host["http"]
@@ -572,7 +588,7 @@ class Xerxes():
                 if has_key(http_dict, "components"):
                     components_dict = http_dict["components"]
                     for key, value in components_dict.items():
-                        db_entry[f'HAS{key}'] = "1"
+                        db_entry[f"HAS{key}"] = "1"
 
             processed_in_this_thread = processed_in_this_thread + 1
 
@@ -597,7 +613,7 @@ class Xerxes():
         sqlite_connection = sqlite3.connect(self.xerxes_db)
 
         sqlite_connection.row_factory = sqlite3.Row
-        db_read_cursor = sqlite_connection.execute(f'select * from shodan')
+        db_read_cursor = sqlite_connection.execute(f"select * from shodan")
         count = 0
         row = db_read_cursor.fetchone()
         # Yes this is slow and clunky, but it is consistent and easy to debug.
@@ -619,9 +635,9 @@ class Xerxes():
 
             # db_read_cursor = sqlite_connection.cursor()
             sqlite_connection.row_factory = sqlite3.Row
-            db_read_cursor = sqlite_connection.execute(f'select * from shodan')
+            db_read_cursor = sqlite_connection.execute(f"select * from shodan")
 
-            with open(self.xerxes_csv, 'w', newline='') as file_object:
+            with open(self.xerxes_csv, "w", newline="") as file_object:
                 row = db_read_cursor.fetchone()
                 column_headers_list = row.keys()
 
@@ -651,12 +667,11 @@ class Xerxes():
         cleaned_json_results = self.recursive_object_scan(json_results)
 
         # Shodan processes 100 results per page
-        self.total_pages = math.ceil(cleaned_json_results['total'] / 100)
+        self.total_pages = math.ceil(cleaned_json_results["total"] / 100)
 
         if self.demo_mode:
             # Force only first page of results which Shodan does not charge query credits for
             self.total_pages = 1
-
 
         self.shodan_info(self.total_pages)
 
@@ -673,8 +688,9 @@ class Xerxes():
 
         # region Multi-threaded operation mode
         pool = multiprocessing.Pool(processes=self.max_parallelism)
-        async_results = [pool.apply_async(self.process_shodan_page, args=(page_num,)) for page_num in
-                         range(0, self.total_pages)]
+        async_results = [
+            pool.apply_async(self.process_shodan_page, args=(page_num,)) for page_num in range(0, self.total_pages)
+        ]
 
         for result in async_results:
             worker_return = result.get()
@@ -688,8 +704,6 @@ class Xerxes():
         print("Shodan data retrieval Complete")
         # self.to_csv()
         print("All processes complete")
-
-
 
 
 if __name__ == "__main__":
